@@ -1,10 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
-"""Fitcoach Environment Client."""
+"""FitCoach Environment Client."""
 
 from typing import Dict
 
@@ -19,64 +13,52 @@ class FitcoachEnv(
     EnvClient[FitcoachAction, FitcoachObservation, State]
 ):
     """
-    Client for the Fitcoach Environment.
+    Client for the FitCoach AI Fitness Coach RL Environment.
 
-    This client maintains a persistent WebSocket connection to the environment server,
-    enabling efficient multi-step interactions with lower latency.
-    Each client instance has its own dedicated environment session on the server.
+    Maintains a persistent WebSocket connection to the environment server.
 
     Example:
-        >>> # Connect to a running server
-        >>> with FitcoachEnv(base_url="http://localhost:8000") as client:
-        ...     result = client.reset()
-        ...     print(result.observation.echoed_message)
+        >>> with FitcoachEnv(base_url="http://localhost:8000") as env:
+        ...     result = env.reset()
+        ...     print(result.observation.client_profile)
         ...
-        ...     result = client.step(FitcoachAction(message="Hello!"))
-        ...     print(result.observation.echoed_message)
-
-    Example with Docker:
-        >>> # Automatically start container and connect
-        >>> client = FitcoachEnv.from_docker_image("FitCoach-env:latest")
-        >>> try:
-        ...     result = client.reset()
-        ...     result = client.step(FitcoachAction(message="Test"))
-        ... finally:
-        ...     client.close()
+        ...     import json
+        ...     result = env.step(FitcoachAction(
+        ...         action_type="generate_plan",
+        ...         workout_plan=json.dumps({"days": [...], "weekly_volume_sets": 18}),
+        ...         nutrition_plan=json.dumps({"daily_targets": {"calories": 2650, "protein_g": 144}}),
+        ...         reasoning="Beginner dumbbell plan for muscle gain"
+        ...     ))
+        ...     print(result.observation.feedback)
+        ...     print(result.reward)
     """
 
     def _step_payload(self, action: FitcoachAction) -> Dict:
-        """
-        Convert FitcoachAction to JSON payload for step message.
-
-        Args:
-            action: FitcoachAction instance
-
-        Returns:
-            Dictionary representation suitable for JSON encoding
-        """
-        return {
-            "message": action.message,
+        payload = {
+            "action_type":    action.action_type,
+            "workout_plan":   action.workout_plan,
+            "nutrition_plan": action.nutrition_plan,
         }
+        if action.reasoning is not None:
+            payload["reasoning"] = action.reasoning
+        return payload
 
     def _parse_result(self, payload: Dict) -> StepResult[FitcoachObservation]:
-        """
-        Parse server response into StepResult[FitcoachObservation].
-
-        Args:
-            payload: JSON response data from server
-
-        Returns:
-            StepResult with FitcoachObservation
-        """
         obs_data = payload.get("observation", {})
         observation = FitcoachObservation(
-            echoed_message=obs_data.get("echoed_message", ""),
-            message_length=obs_data.get("message_length", 0),
-            done=payload.get("done", False),
-            reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            client_profile =obs_data.get("client_profile", {}),
+            progress_data  =obs_data.get("progress_data", {}),
+            complications  =obs_data.get("complications", []),
+            feedback       =obs_data.get("feedback", ""),
+            score_breakdown=obs_data.get("score_breakdown", {}),
+            task_id        =obs_data.get("task_id", ""),
+            phase          =obs_data.get("phase", ""),
+            step_count     =obs_data.get("step_count", 0),
+            best_score     =obs_data.get("best_score", 0.0),
+            done           =payload.get("done", False),
+            reward         =payload.get("reward"),
+            metadata       =obs_data.get("metadata", {}),
         )
-
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
@@ -84,15 +66,6 @@ class FitcoachEnv(
         )
 
     def _parse_state(self, payload: Dict) -> State:
-        """
-        Parse server response into State object.
-
-        Args:
-            payload: JSON response from state request
-
-        Returns:
-            State object with episode_id and step_count
-        """
         return State(
             episode_id=payload.get("episode_id"),
             step_count=payload.get("step_count", 0),

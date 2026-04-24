@@ -1,83 +1,61 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
-FastAPI application for the Fitcoach Environment.
+FastAPI application for the FitCoach RL Environment.
 
-This module creates an HTTP server that exposes the FitcoachEnvironment
-over HTTP and WebSocket endpoints, compatible with EnvClient.
-
-Endpoints:
-    - POST /reset: Reset the environment
-    - POST /step: Execute an action
-    - GET /state: Get current environment state
-    - GET /schema: Get action/observation schemas
-    - WS /ws: WebSocket endpoint for persistent sessions
+Task is selected via FITCOACH_TASK env var (default: week1_plan).
+Valid: week1_plan | plateau_adaptation | conflict_resolution
 
 Usage:
-    # Development (with auto-reload):
-    uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
-
-    # Production:
-    uvicorn server.app:app --host 0.0.0.0 --port 8000 --workers 4
-
-    # Or run directly:
-    python -m server.app
+    $env:FITCOACH_TASK="week1_plan"
+    uvicorn server.app:app --host 0.0.0.0 --port 8000
 """
+
+import os
+import sys
+import functools
+
+# Ensure the FitCoach root is on sys.path so absolute imports work
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 try:
     from openenv.core.env_server.http_server import create_app
-except Exception as e:  # pragma: no cover
+except Exception as e:
     raise ImportError(
-        "openenv is required for the web interface. Install dependencies with '\n    uv sync\n'"
+        "openenv is required. Install with: pip install openenv-core"
     ) from e
 
-try:
-    from ..models import FitcoachAction, FitcoachObservation
-    from .FitCoach_environment import FitcoachEnvironment
-except ModuleNotFoundError:
-    from models import FitcoachAction, FitcoachObservation
-    from server.FitCoach_environment import FitcoachEnvironment
+from models import FitcoachAction, FitcoachObservation
+from server.FitCoach_environment import FitcoachEnvironment
 
+FITCOACH_TASK = os.environ.get("FITCOACH_TASK", "week1_plan")
+VALID_TASKS   = {"week1_plan", "plateau_adaptation", "conflict_resolution"}
 
-# Create the app with web interface and README integration
+if FITCOACH_TASK not in VALID_TASKS:
+    raise ValueError(
+        f"Invalid FITCOACH_TASK='{FITCOACH_TASK}'. "
+        f"Must be one of: {sorted(VALID_TASKS)}"
+    )
+
+EnvFactory = functools.partial(FitcoachEnvironment, task_id=FITCOACH_TASK)
+
 app = create_app(
-    FitcoachEnvironment,
+    EnvFactory,
     FitcoachAction,
     FitcoachObservation,
     env_name="FitCoach",
-    max_concurrent_envs=1,  # increase this number to allow more concurrent WebSocket sessions
+    max_concurrent_envs=4,
 )
 
 
 def main(host: str = "0.0.0.0", port: int = 8000):
-    """
-    Entry point for direct execution via uv run or python -m.
-
-    This function enables running the server without Docker:
-        uv run --project . server
-        uv run --project . server --port 8001
-        python -m FitCoach.server.app
-
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
-
-    For production deployments, consider using uvicorn directly with
-    multiple workers:
-        uvicorn FitCoach.server.app:app --workers 4
-    """
     import uvicorn
-
     uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":
     import argparse
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
