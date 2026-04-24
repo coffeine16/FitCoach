@@ -57,6 +57,7 @@ from utils.nutrition import calculate_macro_targets, verify_meal_macros
 from utils.actors import (
     fitness_actor, nutrition_actor, progress_actor, detect_actor_conflicts
 )
+from utils.curriculum import CurriculumManager, generate_client
 
 
 # ── Domain constraint tables ──────────────────────────────────────────────────
@@ -248,6 +249,17 @@ TASK_CONFIGS: dict[str, dict] = {
             "goal_change:weight_loss→maintenance",
         ],
     },
+
+
+    # ── Theme 4: Adaptive curriculum ───────────────────────────────────────
+    "curriculum": {
+        "max_steps": 7,
+        "phases": ["initial"],
+        "description": "Adaptive curriculum — random clients, difficulty escalates with performance.",
+        "client": {},
+        "progress_data": {},
+        "complications": [],
+    },
 }
 
 ALL_ACTORS = {"fitness_advisor", "nutrition_advisor", "progress_analyst"}
@@ -270,6 +282,7 @@ def grade_plan(
     action: FitcoachAction,
     config: dict,
     actors_consulted: list[str],
+    actor_responses: dict[str, dict],
     active_conflicts: list[dict],
     safety_already_violated: bool,
 ) -> tuple[float, dict[str, float], str, bool]:
@@ -500,8 +513,7 @@ def grade_plan(
         scores["coherence"] = 1.0
         fb.append(f"✓ Coherence: {agent_cal:.0f} kcal supports {agent_sets} sets/wk.")
 
-    # ── 8. Actor coordination (NEW) ───────────────────────────────────────────
-    # Check which actors were relevant for this task
+    # ── 8. Actor coordination (TIGHTENED — verifies plan USES actor data) ─────
     needs_progress = bool(progress.get("weight_series") or "plateau" in comps)
     required_actors = {"fitness_advisor", "nutrition_advisor"}
     if needs_progress:
@@ -510,38 +522,59 @@ def grade_plan(
     consulted_set = set(actors_consulted)
     missing_actors = required_actors - consulted_set
 
-    # Check conflicts were resolved
+    # Check plan actually USES actor data (not just consulted)
+    usage_score = 0.0
+    usage_checks = 0
+
+    if "fitness_advisor" in actor_responses:
+        fa_c = actor_responses["fitness_advisor"].get("constraints", {})
+        fa_min = fa_c.get("weekly_sets_min", 0)
+        fa_max = fa_c.get("weekly_sets_max", 999)
+        if fa_min <= agent_sets <= fa_max:
+            usage_score += 1.0
+        usage_checks += 1
+
+    if "nutrition_advisor" in actor_responses:
+        na_cal = actor_responses["nutrition_advisor"].get("constraints", {}).get("calories_target", 0)
+        if na_cal > 0 and agent_cal > 0:
+            if abs(agent_cal - na_cal) / na_cal <= 0.15:
+                usage_score += 1.0
+            elif abs(agent_cal - na_cal) / na_cal <= 0.25:
+                usage_score += 0.5
+        usage_checks += 1
+
+    if "progress_analyst" in actor_responses:
+        must_adapt = actor_responses["progress_analyst"].get("constraints", {}).get("must_adapt_if_plateau", False)
+        if must_adapt:
+            usage_score += 1.0 if scores.get("plateau_response", 0) >= 0.5 else 0.0
+        else:
+            usage_score += 1.0
+        usage_checks += 1
+
     unresolved = []
     for conflict in active_conflicts:
-        conflict_type = conflict.get("type", "")
-        if conflict_type == "plateau_volume_conflict":
-            if scores.get("plateau_response", 1.0) < 0.5:
-                unresolved.append(conflict_type)
-        elif conflict_type == "volume_calorie_mismatch":
-            if scores.get("coherence", 1.0) < 0.5:
-                unresolved.append(conflict_type)
-        elif conflict_type == "injury_overload_conflict":
-            if scores.get("constraint_respect", 1.0) < 0.5:
-                unresolved.append(conflict_type)
+        ct = conflict.get("type", "")
+        if ct == "plateau_volume_conflict" and scores.get("plateau_response", 1.0) < 0.5:
+            unresolved.append(ct)
+        elif ct == "volume_calorie_mismatch" and scores.get("coherence", 1.0) < 0.5:
+            unresolved.append(ct)
+        elif ct == "injury_overload_conflict" and scores.get("constraint_respect", 1.0) < 0.5:
+            unresolved.append(ct)
 
-    if not missing_actors and not unresolved:
-        scores["actor_coordination"] = 1.0
-        fb.append(
-            f"✓ Actor coordination: consulted all required actors "
-            f"({sorted(consulted_set)}) and resolved all conflicts."
-        )
-    elif missing_actors:
-        penalty = len(missing_actors) / len(required_actors)
-        scores["actor_coordination"] = max(0.0, 1.0 - penalty)
-        fb.append(
-            f"✗ Actor coordination: did not consult {sorted(missing_actors)}. "
-            f"Always consult all relevant actors before submitting."
-        )
+    if missing_actors:
+        consult_score = max(0.0, 1.0 - len(missing_actors) / len(required_actors))
+        scores["actor_coordination"] = consult_score * 0.5
+        fb.append(f"✗ Coordination: missing {sorted(missing_actors)}.")
+    elif unresolved:
+        scores["actor_coordination"] = max(0.0, 0.4 - 0.15 * len(unresolved))
+        fb.append(f"✗ Coordination: {len(unresolved)} conflict(s) unresolved.")
     else:
-        scores["actor_coordination"] = max(0.0, 0.5 - 0.2 * len(unresolved))
-        fb.append(
-            f"✗ Actor coordination: {len(unresolved)} conflict(s) unresolved: {unresolved}."
-        )
+        usage_pct = (usage_score / usage_checks) if usage_checks > 0 else 0.5
+        scores["actor_coordination"] = round(usage_pct, 2)
+        if usage_pct >= 0.8:
+            fb.append(f"✓ Coordination: plan follows all actor constraints.")
+        else:
+            fb.append(f"~ Coordination: plan partially ignores actor data ({usage_pct:.0%}).")
 
     # ── Aggregate ─────────────────────────────────────────────────────────────
     active  = list(scores.values())
@@ -572,6 +605,8 @@ class FitcoachEnvironment(Environment):
                 f"Unknown task_id '{task_id}'. Valid: {list(TASK_CONFIGS.keys())}"
             )
         self._task_id         = task_id
+        self._is_curriculum   = (task_id == "curriculum")
+        self._curriculum      = CurriculumManager() if self._is_curriculum else None
         self._config          = TASK_CONFIGS[task_id]
         self._state           = State(episode_id=str(uuid4()), step_count=0)
         self._phase_idx       = 0
@@ -583,6 +618,17 @@ class FitcoachEnvironment(Environment):
         self._active_conflicts: list[dict] = []
 
     def reset(self) -> FitcoachObservation:
+        # Record previous episode for curriculum
+        if self._is_curriculum and self._curriculum and self._best_score > 0:
+            self._curriculum.record_score(self._best_score)
+
+        # Build config (curriculum generates random clients)
+        if self._is_curriculum and self._curriculum:
+            ep = self._curriculum.get_next_episode()
+            self._config = ep
+        else:
+            self._config = TASK_CONFIGS[self._task_id]
+
         self._state            = State(episode_id=str(uuid4()), step_count=0)
         self._phase_idx        = 0
         self._best_score       = 0.0
@@ -768,6 +814,7 @@ class FitcoachEnvironment(Environment):
             reward, breakdown, feedback, safety_now = grade_plan(
                 action, cfg,
                 self._actors_consulted,
+                self._actor_responses,
                 self._active_conflicts,
                 self._safety_hit,
             )

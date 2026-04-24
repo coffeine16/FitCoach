@@ -14,23 +14,34 @@ tasks:
       vegetarian client with dumbbells and pull-up bar only. Graded on
       equipment compliance, macro accuracy against IFCT 2017 database,
       volume appropriateness, and nutrition-training coherence.
+      Agent must consult all 3 specialist actors before submitting.
 
   - id: plateau_adaptation
     name: Plateau Detection & Adaptation
     difficulty: medium
     description: >
       An intermediate client has been stuck at the same weight for 14 days.
-      Plateau detected via linear regression on 7-day rolling mean (Hall et al. 2011).
-      Agent must detect the plateau and adapt: increase training volume by ≥10%
-      OR reduce calories by ≥150 kcal. Also applies progressive overload rules
-      to previously tracked exercises.
+      Plateau detected via linear regression on 7-day rolling mean.
+      FitnessAdvisor and NutritionAdvisor will CONFLICT on how to adapt.
+      Agent must consult all actors, resolve the conflict, and submit
+      an adapted plan.
 
   - id: conflict_resolution
     name: Multi-Conflict Resolution
     difficulty: hard
     description: >
-      Three simultaneous challenges: (1) 3-week weight plateau requiring
-      adaptation, (2) new lower-back injury making deadlifts and bent-over
-      rows contraindicated, (3) goal change from weight_loss to maintenance
-      requiring caloric adjustment upward. Hard safety penalty of −0.3 for
-      any constraint or injury violation.
+      Three simultaneous challenges requiring multi-actor coordination:
+      (1) 3-week weight plateau, (2) new lower-back injury creating an
+      injury-overload conflict between actors, (3) goal change requiring
+      caloric adjustment. All three actors will have conflicting
+      recommendations that the orchestrator must resolve.
+
+  - id: curriculum
+    name: Adaptive Curriculum (Self-Improvement)
+    difficulty: adaptive
+    description: >
+      Adaptive curriculum mode — generates RANDOM clients each episode
+      so the agent cannot memorize answers. Difficulty starts at easy
+      and escalates to medium then hard as the agent scores consistently
+      above 0.8. Difficulty drops back if agent struggles. This implements
+      Theme 4 (Self-Improvement) with procedural client generation.
