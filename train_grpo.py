@@ -208,7 +208,7 @@ print(f"GPU: {torch.cuda.get_device_name(0)}")
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL_NAME,
     max_seq_length=MAX_SEQ_LENGTH,
-    dtype=None,
+    dtype=torch.bfloat16,
     load_in_4bit=True,
 )
 
