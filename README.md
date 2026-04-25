@@ -1,6 +1,5 @@
 ---
 title: FitCoach Multi-Actor RL Environment
-emoji: 🏋️
 colorFrom: red
 colorTo: green
 sdk: docker
@@ -11,11 +10,11 @@ tags:
   - openenv
 ---
 
-# FitCoach — Multi-Actor Fitness Orchestrator RL Environment
+# FitCoach -- Multi-Actor Fitness Orchestrator RL Environment
 
 An OpenEnv-compliant RL environment where an LLM agent plays an **orchestrator** coordinating three deterministic specialist actors to produce integrated fitness + nutrition prescriptions.
 
-**Hackathon Themes:** Multi-Agent Interactions (Theme 1 — Halluminate sub-theme) | Professional Tasks (Theme 3.1) | Self-Improvement (Theme 4 — Snorkel AI sub-theme)
+**Hackathon Themes:** Multi-Agent Interactions (Theme 1 -- Halluminate sub-theme) | Professional Tasks (Theme 3.1) | Self-Improvement (Theme 4 -- Snorkel AI sub-theme)
 
 ## What Makes This Environment Interesting
 
@@ -25,24 +24,24 @@ The agent does NOT generate fitness plans in isolation. It must:
 2. **Detect conflicts** between actors (e.g., high volume vs low calories, injury vs overload demands)
 3. **Resolve conflicts** and submit a final integrated plan
 4. **Handle mid-episode complications** (injuries injected mid-episode, goal changes)
-5. **Adapt to adaptive curriculum** — random clients each episode, difficulty escalates with performance
+5. **Adapt to adaptive curriculum** -- random clients each episode, difficulty escalates with performance
 
 The actors are **deterministic rule engines**, not LLMs. The LLM being trained is the orchestrator that manages them.
 
-## Reward Dimensions (8 total, scored 0–1)
+## Reward Dimensions (8 total, scored 0-1)
 
 | Dimension | What It Measures |
 |---|---|
 | `equipment_compliance` | Exercises match available equipment only |
-| `macro_accuracy` | Macros within ±15% of IFCT 2017 formula targets |
-| `volume_appropriateness` | Weekly sets in correct range for fitness level × goal |
+| `macro_accuracy` | Macros within +/-15% of IFCT 2017 formula targets |
+| `volume_appropriateness` | Weekly sets in correct range for fitness level x goal |
 | `progressive_overload` | Correct double-progression applied to exercise history |
 | `plateau_response` | Adapted volume/calories when plateau detected |
 | `constraint_respect` | No contraindicated exercises or dietary violations |
 | `coherence` | Nutrition supports training volume (no high volume + low cal) |
 | `actor_coordination` | Consulted all actors, plan follows their constraints |
 
-Safety penalty: −0.3 for any hard constraint violation (injury-banned exercise or dietary violation).
+Safety penalty: 0.3 for any hard constraint violation (injury-banned exercise or dietary violation).
 
 ## Tasks
 
@@ -51,7 +50,7 @@ Safety penalty: −0.3 for any hard constraint violation (injury-banned exercise
 | `week1_plan` | Easy | Fresh beginner, vegetarian, dumbbells only. Consult actors, submit valid plan. |
 | `plateau_adaptation` | Medium | 14-day weight plateau. Actors conflict on adaptation. Knee injury injected mid-episode. |
 | `conflict_resolution` | Hard | 3 simultaneous challenges: plateau + lower-back injury + goal change. All actors conflict. |
-| `curriculum` | Adaptive | Random clients each episode. Difficulty escalates easy→medium→hard with performance. |
+| `curriculum` | Adaptive | Random clients each episode. Difficulty escalates easy->medium->hard with performance. |
 
 ## Quick Start
 
@@ -59,7 +58,7 @@ Safety penalty: −0.3 for any hard constraint violation (injury-banned exercise
 from FitCoach import FitcoachAction, FitcoachEnv
 
 with FitcoachEnv(base_url="http://localhost:8000") as env:
-    # Reset — get client profile
+    # Reset -- get client profile
     result = env.reset()
     print(result.observation.client_profile)
     print(result.observation.complications)
@@ -112,27 +111,27 @@ with FitcoachEnv(base_url="http://localhost:8000") as env:
 ## Episode Flow
 
 ```
-Reset → Client profile + complications
-  ↓
-consult_actor(fitness_advisor)   → volume range, equipment, banned exercises
-consult_actor(nutrition_advisor) → macro targets, banned foods, IFCT 2017
-consult_actor(progress_analyst)  → plateau status, overload signals
-  ↓
+Reset -> Client profile + complications
+  
+consult_actor(fitness_advisor)   -> volume range, equipment, banned exercises
+consult_actor(nutrition_advisor) -> macro targets, banned foods, IFCT 2017
+consult_actor(progress_analyst)  -> plateau status, overload signals
+  
 Conflicts detected between actors (shown in observation)
-  ↓
+  
 submit_plan(workout + nutrition + reasoning)
-  ↓
-If score < 0.85: actors REJECT with specific fixes → agent revises
-If score ≥ 0.85: all actors ACCEPT → episode ends
+  
+If score < 0.85: actors REJECT with specific fixes -> agent revises
+If score >= 0.85: all actors ACCEPT -> episode ends
 ```
 
 ## Actor Pushback System
 
 After the agent submits a plan, each actor **reviews** it against their own constraints:
 
-- **FitnessAdvisor** checks volume range, equipment, banned exercises → suggests equipment swaps
-- **NutritionAdvisor** checks calorie/protein targets, banned foods → suggests IFCT 2017 alternatives
-- **ProgressAnalyst** checks plateau adaptation → requires volume/calorie changes
+- **FitnessAdvisor** checks volume range, equipment, banned exercises -> suggests equipment swaps
+- **NutritionAdvisor** checks calorie/protein targets, banned foods -> suggests IFCT 2017 alternatives
+- **ProgressAnalyst** checks plateau adaptation -> requires volume/calorie changes
 
 If any actor rejects, the episode continues and the agent must revise. This transforms the environment from a passive grader into an **active negotiation arena**.
 
@@ -140,7 +139,7 @@ If any actor rejects, the episode continues and the agent must revise. This tran
 
 - **Nutrition**: Grounded in IFCT 2017 (Indian Food Composition Tables, NIN Hyderabad) + USDA FoodData. 30+ foods with verified macros per 100g.
 - **Plateau Detection**: 7-day rolling mean + OLS linear regression. Classifies trend as plateau/on_track/overshooting/reversing.
-- **Progressive Overload**: Double-progression rules — add weight when all sets hit top of rep range, deload on heavy misses.
+- **Progressive Overload**: Double-progression rules -- add weight when all sets hit top of rep range, deload on heavy misses.
 - **Injury Safety**: Contraindicated exercise lists per injury type with safe alternatives.
 
 ## Running Locally
@@ -161,20 +160,20 @@ See the [training notebook](FitCoach_RL_Training_Unsloth.ipynb) for GRPO trainin
 
 ```
 FitCoach/
-├── models.py                    # Action/Observation Pydantic models
-├── client.py                    # WebSocket client (FitcoachEnv)
-├── inference.py                 # Multi-actor orchestrator agent
-├── baseline_weak.py             # Untrained baseline for comparison
-├── openenv.yaml                 # OpenEnv manifest (4 tasks)
-├── server/
-│   ├── FitCoach_environment.py  # Core environment + 8-dimension grader
-│   ├── app.py                   # FastAPI application
-│   └── Dockerfile               # Container build
-└── utils/
-    ├── actors.py                # 3 deterministic specialist actors
-    ├── pushback.py              # Actor review + rejection engine
-    ├── nutrition.py             # IFCT 2017 nutrition database
-    ├── plateau.py               # Statistical plateau detection
-    ├── overload.py              # Progressive overload verification
-    └── curriculum.py            # Adaptive curriculum manager (Theme 4)
+ models.py                    # Action/Observation Pydantic models
+ client.py                    # WebSocket client (FitcoachEnv)
+ inference.py                 # Multi-actor orchestrator agent
+ baseline_weak.py             # Untrained baseline for comparison
+ openenv.yaml                 # OpenEnv manifest (4 tasks)
+ server/
+    FitCoach_environment.py  # Core environment + 8-dimension grader
+    app.py                   # FastAPI application
+    Dockerfile               # Container build
+ utils/
+     actors.py                # 3 deterministic specialist actors
+     pushback.py              # Actor review + rejection engine
+     nutrition.py             # IFCT 2017 nutrition database
+     plateau.py               # Statistical plateau detection
+     overload.py              # Progressive overload verification
+     curriculum.py            # Adaptive curriculum manager (Theme 4)
 ```
