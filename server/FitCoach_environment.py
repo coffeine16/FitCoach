@@ -181,6 +181,9 @@ TASK_CONFIGS: dict[str, dict] = {
             },
         },
         "complications": ["plateau"],
+        "complication_schedule": {
+            4: ["new_injury:knee"],  # Knee pain added mid-episode
+        },
     },
 
     "conflict_resolution": {
@@ -249,7 +252,6 @@ TASK_CONFIGS: dict[str, dict] = {
             "goal_change:weight_loss→maintenance",
         ],
     },
-
 
     # ── Theme 4: Adaptive curriculum ───────────────────────────────────────
     "curriculum": {
@@ -616,6 +618,8 @@ class FitcoachEnvironment(Environment):
         self._actors_consulted: list[str] = []
         self._actor_responses: dict[str, dict] = {}
         self._active_conflicts: list[dict] = []
+        self._active_complications: list[str] = []
+        self._injected_complications: list[str] = []
 
     def reset(self) -> FitcoachObservation:
         # Record previous episode for curriculum
@@ -637,6 +641,8 @@ class FitcoachEnvironment(Environment):
         self._actors_consulted = []
         self._actor_responses  = {}
         self._active_conflicts = []
+        self._active_complications = list(cfg.get("complications", []))
+        self._injected_complications = []
 
         cfg   = self._config
         phase = cfg["phases"][0]
@@ -674,9 +680,28 @@ class FitcoachEnvironment(Environment):
         max_steps = cfg["max_steps"]
         client    = cfg["client"]
         progress  = cfg["progress_data"]
-        comps     = cfg["complications"]
 
         done_by_steps = self._state.step_count >= max_steps
+
+        # ── Mid-episode complication injection (Theme 3.1 / Theme 1) ─────────
+        # Check if any complications are scheduled for this step
+        schedule = cfg.get("complication_schedule", {})
+        newly_injected = []
+        for trigger_step, new_comps in schedule.items():
+            for comp in new_comps:
+                if (self._state.step_count >= trigger_step
+                        and comp not in self._active_complications
+                        and comp not in self._injected_complications):
+                    self._active_complications.append(comp)
+                    self._injected_complications.append(comp)
+                    newly_injected.append(comp)
+                    # Also update client injuries if it's a new_injury
+                    if comp.startswith("new_injury:"):
+                        injury = comp.split(":", 1)[1]
+                        if injury not in cfg["client"].get("injuries", []):
+                            cfg["client"].setdefault("injuries", []).append(injury)
+
+        comps = self._active_complications  # Use dynamic complications
 
         # ── Handle consult_actor ──────────────────────────────────────────────
         if action.action_type == "consult_actor":
@@ -729,6 +754,19 @@ class FitcoachEnvironment(Environment):
                         "constraints": {"must_adapt_if_plateau": False, "required_actions": []},
                         "conflicts": {"with_fitness": False, "with_nutrition": False, "reason": None},
                     })
+
+            # Alert agent about newly injected complications
+            injection_alert = ""
+            if newly_injected:
+                injury_names = [c.split(":", 1)[1] for c in newly_injected if c.startswith("new_injury:")]
+                injection_alert = (
+                    f"\n\n🚨 NEW COMPLICATION(S) JUST EMERGED:\n"
+                    + "\n".join(f"  - {c}" for c in newly_injected)
+                    + (f"\n  Injury '{injury_names[0]}' means some exercises are now BANNED. "
+                       f"Re-consult fitness_advisor to get the updated constraint list."
+                       if injury_names else "")
+                    + "\n  You must adapt your plan to handle this new situation."
+                )
 
             conflict_note = ""
             if self._active_conflicts:
