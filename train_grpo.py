@@ -221,10 +221,11 @@ print(f"GPU: {torch.cuda.get_device_name(0)}")
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL_NAME,
     max_seq_length=MAX_SEQ_LENGTH,
-    # FIX: do NOT set dtype manually when using 4bit — let Unsloth decide.
-    # Mixing bfloat16 + 4bit quant caused the Half/Float matmul crash.
-    dtype=None,
-    load_in_4bit=True,
+    # Use bfloat16 without 4bit quantization to avoid Unsloth 2026.4.8
+    # bug where quantized LoRA kernel hits Half/Float dtype mismatch.
+    # L40S has 44GB VRAM so Qwen2.5-1.5B fits easily in bf16.
+    dtype=torch.bfloat16,
+    load_in_4bit=False,
 )
 
 model = FastLanguageModel.get_peft_model(
