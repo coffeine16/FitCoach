@@ -1,45 +1,37 @@
 """
-FitCoach GRPO Training Script — for HuggingFace Jobs (A10G recommended)
+FitCoach GRPO Training Script — for HuggingFace Jobs (L40S recommended)
 
 Launch with:
-  hf jobs run --gpu a10g-small --secret HF_TOKEN=hf_your_write_token \
-    python:3.11 python train_grpo.py
-
-Estimated time: 30-45 minutes on A10G
-Estimated cost: ~$0.50
+  hf jobs run --flavor l40sx1 \
+    -v hf://spaces/coffeine16/FitCoach:/workspace \
+    huggingface/transformers-pytorch-gpu:latest \
+    bash -c "pip install unsloth trl peft accelerate bitsandbytes datasets openenv-core fastapi uvicorn huggingface_hub && python /workspace/train_grpo.py"
 """
 
 import os
 import sys
 import json
 import threading
-import subprocess
 
-# ── 1. Install dependencies ─────────────────────────────────────────────────
-print("Installing dependencies...")
-subprocess.run(["pip", "install", "-q", "unsloth"], check=True)
-subprocess.run(["pip", "install", "-q", "--no-deps",
-                "trl>=0.12.0", "peft", "accelerate", "bitsandbytes"], check=True)
-subprocess.run(["pip", "install", "-q",
-                "datasets", "openenv-core>=0.2.2", "fastapi", "uvicorn",
-                "requests", "huggingface_hub"], check=True)
-print("Dependencies installed.")
+# ── Redirect unsloth cache to writable location ──────────────────────────────
+os.environ["UNSLOTH_CACHE_DIR"] = "/tmp/unsloth_compiled_cache"
+os.makedirs("/tmp/unsloth_compiled_cache", exist_ok=True)
 
-# ── 2. Clone FitCoach environment ──────────────────────────────────────────
 FITCOACH_DIR = "/workspace"
 if not os.path.exists(FITCOACH_DIR):
-    print("Using mounted FitCoach environment...")
+    print("FitCoach workspace not found at /workspace")
+    sys.exit(1)
 
 sys.path.insert(0, FITCOACH_DIR)
 
-# ── 3. Imports ──────────────────────────────────────────────────────────────
+# ── Imports ──────────────────────────────────────────────────────────────────
 from server.FitCoach_environment import FitcoachEnvironment
 from models import FitcoachAction
 from utils.curriculum import generate_client
 from utils.actors import fitness_actor, nutrition_actor, progress_actor
 import utils.actors
 
-# ── 4. Patch progress_actor (required_actions key bug) ─────────────────────
+# ── Patch progress_actor (required_actions key bug) ─────────────────────────
 def progress_actor_fixed(client, progress, complications):
     from utils.plateau import detect_plateau
     goal = client.get('goal', 'maintenance')
@@ -111,7 +103,7 @@ import server.FitCoach_environment
 server.FitCoach_environment.progress_actor = progress_actor_fixed
 print("Patched progress_actor.")
 
-# ── 5. Reward function with thread-local environment ───────────────────────
+# ── Reward function with thread-local environment ────────────────────────────
 training_log = {'step_rewards': [], 'step_difficulties': [], 'step_breakdowns': []}
 _local = threading.local()
 
@@ -120,27 +112,20 @@ def get_env():
         _local.env = FitcoachEnvironment(task_id='curriculum')
     return _local.env
 
-def run_full_episode(plan_json, **kwargs):
+
+def run_full_episode(text: str):
+    """
+    Run a full episode given a raw completion string.
+    Returns (reward, breakdown, difficulty).
+    """
     try:
-        if isinstance(plan_json, dict):
-            plan_json = plan_json.get('content', str(plan_json))
-        elif isinstance(plan_json, list):
-            plan_json = plan_json[-1].get('content', '') if plan_json else ''
-        elif not isinstance(plan_json, str):
-            plan_json = str(plan_json)
-
-        env = get_env()
-        env.reset()
-        for actor in ['fitness_advisor', 'nutrition_advisor', 'progress_analyst']:
-            env.step(FitcoachAction(
-                action_type='consult_actor', actor_target=actor,
-                workout_plan='{}', nutrition_plan='{}'))
-
-        text = plan_json.strip()
+        # Strip markdown fences if present
+        text = text.strip()
         if '```' in text:
             lines = [l for l in text.split('\n') if not l.strip().startswith('```')]
             text = '\n'.join(lines).strip()
 
+        # Find JSON start
         start = text.find('{')
         if start == -1:
             return 0.0, {}, 'easy'
@@ -160,6 +145,19 @@ def run_full_episode(plan_json, **kwargs):
         if parsed is None:
             return 0.0, {}, 'easy'
 
+        env = get_env()
+        env.reset()
+
+        # Consult all three actors first
+        for actor in ['fitness_advisor', 'nutrition_advisor', 'progress_analyst']:
+            env.step(FitcoachAction(
+                action_type='consult_actor',
+                actor_target=actor,
+                workout_plan='{}',
+                nutrition_plan='{}',
+            ))
+
+        # Submit the plan
         result = env.step(FitcoachAction(
             action_type='submit_plan',
             workout_plan=json.dumps(parsed.get('workout_plan', {})),
@@ -169,33 +167,48 @@ def run_full_episode(plan_json, **kwargs):
 
         reward = float(result.reward or 0.0)
         breakdown = dict(result.score_breakdown or {})
+
         difficulty = 'easy'
         fb = result.feedback or ''
-        if 'MEDIUM' in fb: difficulty = 'medium'
-        elif 'HARD' in fb: difficulty = 'hard'
+        if 'MEDIUM' in fb:
+            difficulty = 'medium'
+        elif 'HARD' in fb:
+            difficulty = 'hard'
+
         return reward, breakdown, difficulty
 
     except Exception as e:
         print(f'Episode error: {e}')
         return 0.0, {}, 'easy'
 
+
 def fitcoach_reward_fn(completions, **kwargs):
+    """
+    TRL GRPO reward function.
+    `completions` is a list of strings (raw model outputs).
+    """
     rewards = []
     for completion in completions:
+        # TRL passes completions as plain strings
         if isinstance(completion, list):
+            # list-of-dicts format: [{"role": "assistant", "content": "..."}]
             text = completion[-1].get('content', '') if completion else ''
         elif isinstance(completion, dict):
             text = completion.get('content', str(completion))
         else:
+            # Plain string — the common case with GRPOTrainer
             text = str(completion)
+
         reward, breakdown, difficulty = run_full_episode(text)
         training_log['step_rewards'].append(reward)
         training_log['step_difficulties'].append(difficulty)
         training_log['step_breakdowns'].append(breakdown)
         rewards.append(reward)
+
     return rewards
 
-# ── 6. Load model with Unsloth ─────────────────────────────────────────────
+
+# ── Load model with Unsloth ──────────────────────────────────────────────────
 from unsloth import FastLanguageModel
 import torch
 
@@ -208,7 +221,9 @@ print(f"GPU: {torch.cuda.get_device_name(0)}")
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=MODEL_NAME,
     max_seq_length=MAX_SEQ_LENGTH,
-    dtype=torch.bfloat16,
+    # FIX: do NOT set dtype manually when using 4bit — let Unsloth decide.
+    # Mixing bfloat16 + 4bit quant caused the Half/Float matmul crash.
+    dtype=None,
     load_in_4bit=True,
 )
 
@@ -221,6 +236,7 @@ model = FastLanguageModel.get_peft_model(
     lora_dropout=0,
     bias='none',
     use_gradient_checkpointing='unsloth',
+    random_state=42,
 )
 
 if tokenizer.pad_token is None:
@@ -228,7 +244,8 @@ if tokenizer.pad_token is None:
 tokenizer.padding_side = 'left'
 print("Model loaded.")
 
-# ── 7. Build dataset ───────────────────────────────────────────────────────
+
+# ── Build dataset ─────────────────────────────────────────────────────────────
 SYSTEM_MSG = (
     "You are a fitness plan generator. Given a client profile and specialist "
     "advisor constraints, generate a workout and nutrition plan as JSON.\n\n"
@@ -244,6 +261,7 @@ SYSTEM_MSG = (
     '{"workout_plan": {"days": [...], "weekly_volume_sets": int}, '
     '"nutrition_plan": {"daily_targets": {...}, "meals": [...]}}'
 )
+
 
 def extract_constraints_text(actor_data, client):
     lines = []
@@ -271,6 +289,7 @@ def extract_constraints_text(actor_data, client):
         lines.append(f"  Plateau status: {pa_r.get('plateau_status', 'unknown')}")
     return '\n'.join(lines)
 
+
 def build_training_prompt(client, actor_constraints):
     user_msg = (
         f"Client profile:\n{json.dumps(client, indent=2)}\n\n"
@@ -281,6 +300,7 @@ def build_training_prompt(client, actor_constraints):
         {'role': 'system', 'content': SYSTEM_MSG},
         {'role': 'user', 'content': user_msg},
     ]
+
 
 def get_actor_constraints_for_client(client_data):
     client = client_data['client']
@@ -293,7 +313,9 @@ def get_actor_constraints_for_client(client_data):
         'fitness_advisor': fa, 'nutrition_advisor': na, 'progress_analyst': pa
     }, client)
 
+
 from datasets import Dataset
+
 TRAINING_STEPS = 80
 NUM_GENERATIONS = 4
 DATASET_SIZE = TRAINING_STEPS * 2
@@ -313,7 +335,8 @@ for i in range(DATASET_SIZE):
 dataset = Dataset.from_list(prompts)
 print(f"Dataset: {len(dataset)} prompts.")
 
-# ── 8. GRPO training ───────────────────────────────────────────────────────
+
+# ── GRPO training ─────────────────────────────────────────────────────────────
 from trl import GRPOConfig, GRPOTrainer
 
 print("Starting GRPO training...")
@@ -331,7 +354,9 @@ grpo_config = GRPOConfig(
     logging_steps=5,
     save_steps=TRAINING_STEPS,
     report_to='none',
-    bf16=True,    # A10G supports bf16
+    # FIX: use bf16=True only if supported; L40S supports bf16.
+    # But since we set dtype=None above, let torch decide at runtime.
+    bf16=True,
     fp16=False,
     gradient_checkpointing=True,
 )
@@ -347,7 +372,8 @@ trainer = GRPOTrainer(
 trainer.train()
 print("Training complete.")
 
-# ── 9. Save and push ───────────────────────────────────────────────────────
+
+# ── Save and push ─────────────────────────────────────────────────────────────
 LOCAL_SAVE = '/tmp/fitcoach_grpo_lora'
 HF_REPO = 'coffeine16/fitcoach-grpo-qwen2.5-1.5b'
 
@@ -364,11 +390,11 @@ else:
     tokenizer.push_to_hub(HF_REPO, token=hf_token)
     print(f"Pushed to https://huggingface.co/{HF_REPO}")
 
-# ── 10. Save training log ──────────────────────────────────────────────────
+
+# ── Save training log ─────────────────────────────────────────────────────────
 with open('/tmp/training_log.json', 'w') as f:
     json.dump(training_log, f)
 
-# Print summary
 import numpy as np
 rewards = training_log['step_rewards']
 if rewards:
