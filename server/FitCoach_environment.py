@@ -57,6 +57,7 @@ from utils.nutrition import calculate_macro_targets, verify_meal_macros
 from utils.actors import (
     fitness_actor, nutrition_actor, progress_actor, detect_actor_conflicts
 )
+from utils.pushback import collect_actor_pushback
 from utils.curriculum import CurriculumManager, generate_client
 
 
@@ -641,10 +642,10 @@ class FitcoachEnvironment(Environment):
         self._actors_consulted = []
         self._actor_responses  = {}
         self._active_conflicts = []
-        self._active_complications = list(cfg.get("complications", []))
         self._injected_complications = []
 
         cfg   = self._config
+        self._active_complications = list(cfg.get("complications", []))
         phase = cfg["phases"][0]
 
         return FitcoachObservation(
@@ -859,12 +860,52 @@ class FitcoachEnvironment(Environment):
             self._safety_hit = safety_now
             self._best_score = max(self._best_score, reward)
 
+            # ── Actor Pushback — actors REVIEW and REJECT if needed ───────
+            # If reward < 0.85 and we have steps left, actors push back
+            # with specific suggestions instead of just ending the episode.
+            try:
+                workout_parsed = json.loads(action.workout_plan or "{}")
+            except json.JSONDecodeError:
+                workout_parsed = {}
+            try:
+                nutrition_parsed = json.loads(action.nutrition_plan or "{}")
+            except json.JSONDecodeError:
+                nutrition_parsed = {}
+
+            rejections = collect_actor_pushback(
+                workout_parsed, nutrition_parsed,
+                client, progress, comps,
+                self._actor_responses,
+            )
+
+            # Base done condition
+            done = reward >= 0.99 or done_by_steps
+
+            # Only run pushback if actors were actually consulted
+            if self._actor_responses and reward < 0.85 and not done_by_steps:
+                if rejections:
+                    pushback_msgs = "\n\n".join(r["message"] for r in rejections)
+                    accepting = [a for a in self._actors_consulted
+                                 if a not in [r["actor"] for r in rejections]]
+                    accept_msg = ("\n✓ ACCEPTED by: " + ", ".join(accepting)) if accepting else ""
+                    feedback += (
+                        f"\n\n{'='*50}\n"
+                        f"ACTOR REVIEW — {len(rejections)} actor(s) REJECTED your plan:\n"
+                        f"{pushback_msgs}"
+                        f"{accept_msg}\n"
+                        f"{'='*50}\n"
+                        f"Revise your plan addressing ALL rejections above then resubmit."
+                    )
+                    done = False  # keep episode alive for revision
+
+            # Show acceptance message only when reward is good
+            if reward >= 0.85 and self._actor_responses:
+                feedback += "\n\n✓ ALL ACTORS ACCEPTED your plan."
+
             # Advance phase
             if reward >= 0.75 and self._phase_idx < len(phases) - 1:
                 self._phase_idx += 1
                 feedback += f"\n\n→ Phase complete! Moving to: {phases[self._phase_idx]}."
-
-            done = reward >= 0.99 or done_by_steps
 
             return FitcoachObservation(
                 client_profile  = client,
