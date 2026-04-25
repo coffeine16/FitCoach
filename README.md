@@ -1,6 +1,6 @@
 ---
-title: Fitcoach Environment Server
-emoji: 🎻
+title: FitCoach Multi-Actor RL Environment
+emoji: 🏋️
 colorFrom: red
 colorTo: green
 sdk: docker
@@ -11,245 +11,170 @@ tags:
   - openenv
 ---
 
-# Fitcoach Environment
+# FitCoach — Multi-Actor Fitness Orchestrator RL Environment
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+An OpenEnv-compliant RL environment where an LLM agent plays an **orchestrator** coordinating three deterministic specialist actors to produce integrated fitness + nutrition prescriptions.
+
+**Hackathon Themes:** Multi-Agent Interactions (Theme 1 — Halluminate sub-theme) | Professional Tasks (Theme 3.1) | Self-Improvement (Theme 4 — Snorkel AI sub-theme)
+
+## What Makes This Environment Interesting
+
+The agent does NOT generate fitness plans in isolation. It must:
+
+1. **Consult** three specialist actors (FitnessAdvisor, NutritionAdvisor, ProgressAnalyst) to discover constraints
+2. **Detect conflicts** between actors (e.g., high volume vs low calories, injury vs overload demands)
+3. **Resolve conflicts** and submit a final integrated plan
+4. **Handle mid-episode complications** (injuries injected mid-episode, goal changes)
+5. **Adapt to adaptive curriculum** — random clients each episode, difficulty escalates with performance
+
+The actors are **deterministic rule engines**, not LLMs. The LLM being trained is the orchestrator that manages them.
+
+## Reward Dimensions (8 total, scored 0–1)
+
+| Dimension | What It Measures |
+|---|---|
+| `equipment_compliance` | Exercises match available equipment only |
+| `macro_accuracy` | Macros within ±15% of IFCT 2017 formula targets |
+| `volume_appropriateness` | Weekly sets in correct range for fitness level × goal |
+| `progressive_overload` | Correct double-progression applied to exercise history |
+| `plateau_response` | Adapted volume/calories when plateau detected |
+| `constraint_respect` | No contraindicated exercises or dietary violations |
+| `coherence` | Nutrition supports training volume (no high volume + low cal) |
+| `actor_coordination` | Consulted all actors, plan follows their constraints |
+
+Safety penalty: −0.3 for any hard constraint violation (injury-banned exercise or dietary violation).
+
+## Tasks
+
+| Task | Difficulty | Description |
+|---|---|---|
+| `week1_plan` | Easy | Fresh beginner, vegetarian, dumbbells only. Consult actors, submit valid plan. |
+| `plateau_adaptation` | Medium | 14-day weight plateau. Actors conflict on adaptation. Knee injury injected mid-episode. |
+| `conflict_resolution` | Hard | 3 simultaneous challenges: plateau + lower-back injury + goal change. All actors conflict. |
+| `curriculum` | Adaptive | Random clients each episode. Difficulty escalates easy→medium→hard with performance. |
 
 ## Quick Start
 
-The simplest way to use the Fitcoach environment is through the `FitcoachEnv` class:
-
 ```python
 from FitCoach import FitcoachAction, FitcoachEnv
 
-try:
-    # Create environment from Docker image
-    FitCoachenv = FitcoachEnv.from_docker_image("FitCoach-env:latest")
-
-    # Reset
-    result = FitCoachenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
-
-    for msg in messages:
-        result = FitCoachenv.step(FitcoachAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
-
-finally:
-    # Always clean up
-    FitCoachenv.close()
-```
-
-That's it! The `FitcoachEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
-
-## Building the Docker Image
-
-Before using the environment, you need to build the Docker image:
-
-```bash
-# From project root
-docker build -t FitCoach-env:latest -f server/Dockerfile .
-```
-
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**FitcoachAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**FitcoachObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Fitcoach environment server running, you can connect directly:
-
-```python
-from FitCoach import FitcoachEnv
-
-# Connect to existing server
-FitCoachenv = FitcoachEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = FitCoachenv.reset()
-result = FitCoachenv.step(FitcoachAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `FitCoachenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from FitCoach import FitcoachAction, FitcoachEnv
-
-# Connect with context manager (auto-connects and closes)
 with FitcoachEnv(base_url="http://localhost:8000") as env:
+    # Reset — get client profile
     result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(FitcoachAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
+    print(result.observation.client_profile)
+    print(result.observation.complications)
+
+    # Step 1: Consult fitness advisor
+    result = env.step(FitcoachAction(
+        action_type="consult_actor",
+        actor_target="fitness_advisor",
+    ))
+    print(result.observation.actor_response)  # volume range, banned exercises
+
+    # Step 2: Consult nutrition advisor
+    result = env.step(FitcoachAction(
+        action_type="consult_actor",
+        actor_target="nutrition_advisor",
+    ))
+    print(result.observation.actor_response)  # calorie target, banned foods
+
+    # Step 3: Consult progress analyst
+    result = env.step(FitcoachAction(
+        action_type="consult_actor",
+        actor_target="progress_analyst",
+    ))
+    print(result.observation.active_conflicts)  # conflicts to resolve
+
+    # Step 4: Submit integrated plan
+    import json
+    result = env.step(FitcoachAction(
+        action_type="submit_plan",
+        workout_plan=json.dumps({
+            "days": [{"name": "Day 1", "focus": "upper", "exercises": [
+                {"name": "Dumbbell Bench Press", "sets": 3, "reps": "8-12",
+                 "rest_seconds": 90, "weight_kg": 15}
+            ]}],
+            "weekly_volume_sets": 14,
+        }),
+        nutrition_plan=json.dumps({
+            "daily_targets": {"calories": 2650, "protein_g": 144,
+                              "carbs_g": 352, "fats_g": 74},
+            "meals": [{"meal_name": "Breakfast",
+                       "foods": ["100g oats", "200ml milk", "1 banana"],
+                       "calories": 450, "protein_g": 18}],
+        }),
+        reasoning="Resolved volume-calorie conflict by keeping sets at 14..."
+    ))
+    print(f"Reward: {result.reward}")
+    print(result.observation.score_breakdown)
 ```
 
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
+## Episode Flow
 
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    FitcoachEnvironment,  # Pass class, not instance
-    FitcoachAction,
-    FitcoachObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
+```
+Reset → Client profile + complications
+  ↓
+consult_actor(fitness_advisor)   → volume range, equipment, banned exercises
+consult_actor(nutrition_advisor) → macro targets, banned foods, IFCT 2017
+consult_actor(progress_analyst)  → plateau status, overload signals
+  ↓
+Conflicts detected between actors (shown in observation)
+  ↓
+submit_plan(workout + nutrition + reasoning)
+  ↓
+If score < 0.85: actors REJECT with specific fixes → agent revises
+If score ≥ 0.85: all actors ACCEPT → episode ends
 ```
 
-Then multiple clients can connect simultaneously:
+## Actor Pushback System
 
-```python
-from FitCoach import FitcoachAction, FitcoachEnv
-from concurrent.futures import ThreadPoolExecutor
+After the agent submits a plan, each actor **reviews** it against their own constraints:
 
-def run_episode(client_id: int):
-    with FitcoachEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(FitcoachAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
+- **FitnessAdvisor** checks volume range, equipment, banned exercises → suggests equipment swaps
+- **NutritionAdvisor** checks calorie/protein targets, banned foods → suggests IFCT 2017 alternatives
+- **ProgressAnalyst** checks plateau adaptation → requires volume/calorie changes
 
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
+If any actor rejects, the episode continues and the agent must revise. This transforms the environment from a passive grader into an **active negotiation arena**.
 
-## Development & Testing
+## Domain Knowledge
 
-### Direct Environment Testing
+- **Nutrition**: Grounded in IFCT 2017 (Indian Food Composition Tables, NIN Hyderabad) + USDA FoodData. 30+ foods with verified macros per 100g.
+- **Plateau Detection**: 7-day rolling mean + OLS linear regression. Classifies trend as plateau/on_track/overshooting/reversing.
+- **Progressive Overload**: Double-progression rules — add weight when all sets hit top of rep range, deload on heavy misses.
+- **Injury Safety**: Contraindicated exercise lists per injury type with safe alternatives.
 
-Test the environment logic directly without starting the HTTP server:
+## Running Locally
 
 ```bash
-# From the server directory
-python3 server/FitCoach_environment.py
+# Start server (choose task)
+FITCOACH_TASK=week1_plan uvicorn server.app:app --host 0.0.0.0 --port 8000
+
+# Or curriculum mode for adaptive difficulty
+FITCOACH_TASK=curriculum uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
+## Training
 
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
+See the [training notebook](FitCoach_RL_Training_Unsloth.ipynb) for GRPO training with Unsloth on Qwen2.5-1.5B.
 
 ## Project Structure
 
 ```
 FitCoach/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # FitcoachEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── FitCoach_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+├── models.py                    # Action/Observation Pydantic models
+├── client.py                    # WebSocket client (FitcoachEnv)
+├── inference.py                 # Multi-actor orchestrator agent
+├── baseline_weak.py             # Untrained baseline for comparison
+├── openenv.yaml                 # OpenEnv manifest (4 tasks)
+├── server/
+│   ├── FitCoach_environment.py  # Core environment + 8-dimension grader
+│   ├── app.py                   # FastAPI application
+│   └── Dockerfile               # Container build
+└── utils/
+    ├── actors.py                # 3 deterministic specialist actors
+    ├── pushback.py              # Actor review + rejection engine
+    ├── nutrition.py             # IFCT 2017 nutrition database
+    ├── plateau.py               # Statistical plateau detection
+    ├── overload.py              # Progressive overload verification
+    └── curriculum.py            # Adaptive curriculum manager (Theme 4)
 ```

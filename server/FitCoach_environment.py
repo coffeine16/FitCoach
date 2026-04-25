@@ -475,7 +475,7 @@ def grade_plan(
 
     dietary_violations = []
     if "vegetarian" in dietary:
-        for m in ["chicken", "beef", "pork", "mutton", "lamb", "turkey", "tuna", "salmon", "prawn"]:
+        for m in ["chicken", "beef", "pork", "mutton", "lamb", "turkey", "tuna", "salmon", "prawn", "fish"]:
             if m in plan_text:
                 dietary_violations.append(f"meat ({m}) for vegetarian")
                 break
