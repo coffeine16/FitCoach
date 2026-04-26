@@ -11,6 +11,7 @@ tags:
 ---
 
 # FitCoach -- Multi-Actor Fitness Orchestrator RL Environment
+Youtube-Video link : https://www.youtube.com/watch?v=2GxX_Ie5_7o
 
 An OpenEnv-compliant RL environment where an LLM agent plays an **orchestrator** coordinating three deterministic specialist actors to produce integrated fitness + nutrition prescriptions.
 
@@ -165,3 +166,4 @@ FitCoach/
     overload.py                # Progressive overload verification
     curriculum.py              # Adaptive curriculum manager (Theme 4)
 ```
+
