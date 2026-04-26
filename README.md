@@ -1,5 +1,6 @@
 ---
 title: FitCoach Multi-Actor RL Environment
+emoji: "🏋"
 colorFrom: red
 colorTo: green
 sdk: docker
