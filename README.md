@@ -1,6 +1,5 @@
 ---
 title: FitCoach Multi-Actor RL Environment
-emoji: "🏋"
 colorFrom: red
 colorTo: green
 sdk: docker
@@ -42,7 +41,7 @@ The actors are **deterministic rule engines**, not LLMs. The LLM being trained i
 | `coherence` | Nutrition supports training volume (no high volume + low cal) |
 | `actor_coordination` | Consulted all actors, plan follows their constraints |
 
-Safety penalty: 0.3 for any hard constraint violation (injury-banned exercise or dietary violation).
+Safety penalty: -0.3 for any hard constraint violation (injury-banned exercise or dietary violation).
 
 ## Tasks
 
@@ -59,33 +58,28 @@ Safety penalty: 0.3 for any hard constraint violation (injury-banned exercise or
 from FitCoach import FitcoachAction, FitcoachEnv
 
 with FitcoachEnv(base_url="http://localhost:8000") as env:
-    # Reset -- get client profile
     result = env.reset()
     print(result.observation.client_profile)
     print(result.observation.complications)
 
-    # Step 1: Consult fitness advisor
     result = env.step(FitcoachAction(
         action_type="consult_actor",
         actor_target="fitness_advisor",
     ))
-    print(result.observation.actor_response)  # volume range, banned exercises
+    print(result.observation.actor_response)
 
-    # Step 2: Consult nutrition advisor
     result = env.step(FitcoachAction(
         action_type="consult_actor",
         actor_target="nutrition_advisor",
     ))
-    print(result.observation.actor_response)  # calorie target, banned foods
+    print(result.observation.actor_response)
 
-    # Step 3: Consult progress analyst
     result = env.step(FitcoachAction(
         action_type="consult_actor",
         actor_target="progress_analyst",
     ))
-    print(result.observation.active_conflicts)  # conflicts to resolve
+    print(result.observation.active_conflicts)
 
-    # Step 4: Submit integrated plan
     import json
     result = env.step(FitcoachAction(
         action_type="submit_plan",
@@ -113,15 +107,15 @@ with FitcoachEnv(base_url="http://localhost:8000") as env:
 
 ```
 Reset -> Client profile + complications
-  
+
 consult_actor(fitness_advisor)   -> volume range, equipment, banned exercises
 consult_actor(nutrition_advisor) -> macro targets, banned foods, IFCT 2017
 consult_actor(progress_analyst)  -> plateau status, overload signals
-  
+
 Conflicts detected between actors (shown in observation)
-  
+
 submit_plan(workout + nutrition + reasoning)
-  
+
 If score < 0.85: actors REJECT with specific fixes -> agent revises
 If score >= 0.85: all actors ACCEPT -> episode ends
 ```
@@ -146,35 +140,28 @@ If any actor rejects, the episode continues and the agent must revise. This tran
 ## Running Locally
 
 ```bash
-# Start server (choose task)
 FITCOACH_TASK=week1_plan uvicorn server.app:app --host 0.0.0.0 --port 8000
-
-# Or curriculum mode for adaptive difficulty
 FITCOACH_TASK=curriculum uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
-
-## Training
-
-See the [training notebook](FitCoach_RL_Training_Unsloth.ipynb) for GRPO training with Unsloth on Qwen2.5-1.5B.
 
 ## Project Structure
 
 ```
 FitCoach/
- models.py                    # Action/Observation Pydantic models
- client.py                    # WebSocket client (FitcoachEnv)
- inference.py                 # Multi-actor orchestrator agent
- baseline_weak.py             # Untrained baseline for comparison
- openenv.yaml                 # OpenEnv manifest (4 tasks)
- server/
-    FitCoach_environment.py  # Core environment + 8-dimension grader
-    app.py                   # FastAPI application
-    Dockerfile               # Container build
- utils/
-     actors.py                # 3 deterministic specialist actors
-     pushback.py              # Actor review + rejection engine
-     nutrition.py             # IFCT 2017 nutrition database
-     plateau.py               # Statistical plateau detection
-     overload.py              # Progressive overload verification
-     curriculum.py            # Adaptive curriculum manager (Theme 4)
+  models.py                    # Action/Observation Pydantic models
+  client.py                    # WebSocket client (FitcoachEnv)
+  inference.py                 # Multi-actor orchestrator agent
+  baseline_weak.py             # Untrained baseline for comparison
+  openenv.yaml                 # OpenEnv manifest (4 tasks)
+  server/
+    FitCoach_environment.py    # Core environment + 8-dimension grader
+    app.py                     # FastAPI application
+    Dockerfile                 # Container build
+  utils/
+    actors.py                  # 3 deterministic specialist actors
+    pushback.py                # Actor review + rejection engine
+    nutrition.py               # IFCT 2017 nutrition database
+    plateau.py                 # Statistical plateau detection
+    overload.py                # Progressive overload verification
+    curriculum.py              # Adaptive curriculum manager (Theme 4)
 ```
